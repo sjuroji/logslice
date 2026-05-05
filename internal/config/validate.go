@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-// ValidationError represents a configuration validation error.
+// ValidationError represents a configuration validation failure.
 type ValidationError struct {
 	Field   string
 	Message string
@@ -16,10 +16,10 @@ func (e *ValidationError) Error() string {
 }
 
 // Validate checks the parsed Config for logical consistency and returns
-// an error if any field combination is invalid.
+// an error if any constraint is violated.
 func Validate(cfg *Config) error {
 	if cfg == nil {
-		return errors.New("config: nil config")
+		return errors.New("config: nil configuration")
 	}
 
 	if cfg.MaxLines < 0 {
@@ -39,11 +39,11 @@ func Validate(cfg *Config) error {
 	}
 
 	if cfg.End.IsZero() && !cfg.Start.IsZero() {
-		// start without end is fine — open-ended range
+		// start without end is valid — open-ended range
 	}
 
 	if !cfg.End.IsZero() && cfg.Start.IsZero() {
-		// end without start is fine — open-ended range
+		// end without start is valid — open-ended range
 	}
 
 	return nil

@@ -22,10 +22,10 @@ func TestValidate_NegativeMaxLines(t *testing.T) {
 	cfg := &Config{MaxLines: -1}
 	err := Validate(cfg)
 	if err == nil {
-		t.Fatal("expected error for negative MaxLines, got nil")
+		t.Fatal("expected error for negative MaxLines")
 	}
 	var ve *ValidationError
-	if ok := errorAs(err, &ve); !ok {
+	if ok := isValidationError(err, &ve); !ok {
 		t.Fatalf("expected *ValidationError, got %T", err)
 	}
 	if ve.Field != "max-lines" {
@@ -41,10 +41,10 @@ func TestValidate_EndBeforeStart(t *testing.T) {
 	}
 	err := Validate(cfg)
 	if err == nil {
-		t.Fatal("expected error when end is before start, got nil")
+		t.Fatal("expected error when end is before start")
 	}
 	var ve *ValidationError
-	if ok := errorAs(err, &ve); !ok {
+	if ok := isValidationError(err, &ve); !ok {
 		t.Fatalf("expected *ValidationError, got %T", err)
 	}
 	if ve.Field != "end" {
@@ -77,10 +77,18 @@ func TestValidate_EndOnly(t *testing.T) {
 	}
 }
 
-// errorAs is a thin wrapper to avoid importing errors in test helpers.
-func errorAs(err error, target **ValidationError) bool {
+func TestValidate_EqualStartEnd(t *testing.T) {
+	now := time.Now()
+	cfg := &Config{Start: now, End: now}
+	if err := Validate(cfg); err != nil {
+		t.Fatalf("unexpected error for equal start/end: %v", err)
+	}
+}
+
+// isValidationError is a helper to type-assert without generics for Go 1.21 compat.
+func isValidationError(err error, out **ValidationError) bool {
 	if ve, ok := err.(*ValidationError); ok {
-		*target = ve
+		*out = ve
 		return true
 	}
 	return false
