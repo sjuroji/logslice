@@ -1,3 +1,5 @@
+// Package timeparser provides utilities for parsing time strings
+// in multiple common formats used in log files.
 package timeparser
 
 import (
@@ -5,52 +7,50 @@ import (
 	"time"
 )
 
-// Common log timestamp formats to try when parsing
-var supportedFormats = []string{
-	"2006-01-02T15:04:05Z07:00",
-	"2006-01-02T15:04:05",
+// SupportedFormats lists the time layouts tried in order when no explicit
+// format is provided.
+var SupportedFormats = []string{
+	time.RFC3339,
+	time.RFC3339Nano,
 	"2006-01-02 15:04:05",
-	"2006-01-02 15:04:05.000",
-	"2006-01-02 15:04:05.000000",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05",
+	"2006-01-02",
 	"02/Jan/2006:15:04:05 -0700",
-	"Jan 02 15:04:05",
-	"2006/01/02 15:04:05",
 }
 
-// Parser holds configuration for time parsing.
+// Parser parses time strings using a fixed location.
 type Parser struct {
-	Location *time.Location
-	Formats  []string
+	loc *time.Location
 }
 
-// New creates a Parser with default formats and the given timezone.
+// New creates a Parser that interprets times without timezone info in loc.
+// If loc is nil, time.UTC is used.
 func New(loc *time.Location) *Parser {
 	if loc == nil {
 		loc = time.UTC
 	}
-	return &Parser{
-		Location: loc,
-		Formats:  supportedFormats,
-	}
+	return &Parser{loc: loc}
 }
 
-// Parse attempts to parse a timestamp string using all supported formats.
-// Returns the parsed time and the format that matched, or an error.
-func (p *Parser) Parse(s string) (time.Time, string, error) {
-	for _, format := range p.Formats {
-		t, err := time.ParseInLocation(format, s, p.Location)
+// Parse attempts to parse s using each of SupportedFormats in order.
+// It returns the first successful result or an error if none match.
+func (p *Parser) Parse(s string) (time.Time, error) {
+	for _, layout := range SupportedFormats {
+		t, err := time.ParseInLocation(layout, s, p.loc)
 		if err == nil {
-			return t, format, nil
+			return t, nil
 		}
 	}
-	return time.Time{}, "", fmt.Errorf("timeparser: unable to parse %q with any known format", s)
+	return time.Time{}, fmt.Errorf("timeparser: unrecognised time string %q", s)
 }
 
-// ParseWithFormat parses a timestamp using a specific format string.
-func (p *Parser) ParseWithFormat(s, format string) (time.Time, error) {
-	t, err := time.ParseInLocation(format, s, p.Location)
+// ParseWithFormat parses s using the explicit layout, honouring the parser
+// location for timezone-naive strings.
+func (p *Parser) ParseWithFormat(layout, s string) (time.Time, error) {
+	t, err := time.ParseInLocation(layout, s, p.loc)
 	if err != nil {
-		return time.Time{}, fmt.Errorf("timeparser: %w", err)
+		return time.Time{}, fmt.Errorf("timeparser: cannot parse %q with layout %q: %w", s, layout, err)
 	}
 	return t, nil
 }
