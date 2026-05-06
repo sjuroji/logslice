@@ -1,81 +1,112 @@
-// Package config provides CLI flag parsing and configuration
-// for the logslice tool.
+// Package config parses and validates CLI flags for logslice.
 package config
 
 import (
 	"flag"
-	"fmt"
 	"io"
 	"time"
 )
 
-// Config holds all runtime options parsed from command-line flags.
+// Config holds the resolved configuration for a single logslice run.
 type Config struct {
-	// Files is the list of log files to process.
+	// Positional arguments after flag parsing.
 	Files []string
 
-	// Pattern is an optional regex pattern to filter lines.
+	// Filtering
 	Pattern string
+	Start   time.Time
+	End     time.Time
+	Layout  string
 
-	// Since filters lines with timestamps after this time (inclusive).
-	Since time.Time
+	// Output
+	MaxLines    int
+	LineNumbers bool
+	Prefix      string
 
-	// Until filters lines with timestamps before this time (inclusive).
-	Until time.Time
-
-	// MaxLines limits the number of output lines (0 = unlimited).
-	MaxLines int
-
-	// ShowLineNumbers prepends line numbers to output.
-	ShowLineNumbers bool
-
-	// Prefix prepends a custom string to each output line.
-	Prefix string
-
-	// TimeFormat is the timestamp layout used when parsing Since/Until.
-	TimeFormat string
+	// Behaviour
+	Recursive bool
+	Suffixes  []string
+	Verbose   bool
+	Stats     bool
 }
 
-// Parse reads flags from args and returns a populated Config.
-// Output and error messages are written to out and errOut respectively.
-func Parse(args []string, out io.Writer, errOut io.Writer) (*Config, error) {
+// Parse reads flags from args, writing usage to w, and returns a Config.
+// It does not call Validate; callers should do so separately.
+func Parse(args []string, w io.Writer) (*Config, error) {
 	fs := flag.NewFlagSet("logslice", flag.ContinueOnError)
-	fs.SetOutput(errOut)
+	fs.SetOutput(w)
 
-	pattern := fs.String("pattern", "", "regex pattern to filter log lines")
-	since := fs.String("since", "", "include lines at or after this timestamp")
-	until := fs.String("until", "", "include lines at or before this timestamp")
-	maxLines := fs.Int("max-lines", 0, "maximum number of lines to output (0 = unlimited)")
-	lineNumbers := fs.Bool("line-numbers", false, "prepend line numbers to output")
-	prefix := fs.String("prefix", "", "prepend a custom string to each output line")
-	timeFormat := fs.String("time-format", "", "timestamp layout for --since and --until parsing")
+	var (
+		pattern     = fs.String("pattern", "", "regex pattern to match against log lines")
+		startStr    = fs.String("start", "", "start of time range (RFC3339 or date)")
+		endStr      = fs.String("end", "", "end of time range (RFC3339 or date)")
+		layout      = fs.String("layout", "", "explicit Go time layout for parsing timestamps")
+		maxLines    = fs.Int("max-lines", 0, "maximum number of matching lines to output (0 = unlimited)")
+		lineNumbers = fs.Bool("line-numbers", false, "prefix each output line with its line number")
+		prefix      = fs.String("prefix", "", "static string prefix for every output line")
+		recursive   = fs.Bool("recursive", false, "recurse into directories")
+		suffix      = fs.String("suffix", ".log", "comma-separated file suffixes when expanding directories")
+		verbose     = fs.Bool("verbose", false, "print verbose progress information")
+		stats       = fs.Bool("stats", false, "print processing statistics after completion")
+	)
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 
 	cfg := &Config{
-		Files:          fs.Args(),
-		Pattern:        *pattern,
-		MaxLines:       *maxLines,
-		ShowLineNumbers: *lineNumbers,
-		Prefix:         *prefix,
-		TimeFormat:     *timeFormat,
+		Files:       fs.Args(),
+		Pattern:     *pattern,
+		Layout:      *layout,
+		MaxLines:    *maxLines,
+		LineNumbers: *lineNumbers,
+		Prefix:      *prefix,
+		Recursive:   *recursive,
+		Verbose:     *verbose,
+		Stats:       *stats,
+		Suffixes:    splitSuffixes(*suffix),
 	}
 
-	var err error
-	if *since != "" {
-		cfg.Since, err = parseTime(*since, *timeFormat)
+	if *startStr != "" {
+		t, err := parseTime(*startStr, *layout)
 		if err != nil {
-			return nil, fmt.Errorf("--since: %w", err)
+			return nil, err
 		}
+		cfg.Start = t
 	}
-	if *until != "" {
-		cfg.Until, err = parseTime(*until, *timeFormat)
+
+	if *endStr != "" {
+		t, err := parseTime(*endStr, *layout)
 		if err != nil {
-			return nil, fmt.Errorf("--until: %w", err)
+			return nil, err
 		}
+		cfg.End = t
 	}
 
 	return cfg, nil
+}
+
+func splitSuffixes(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range splitComma(s) {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func splitComma(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ',' {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	return append(parts, s[start:])
 }
