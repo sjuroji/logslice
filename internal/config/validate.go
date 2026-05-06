@@ -12,20 +12,20 @@ type ValidationError struct {
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("config: invalid %s: %s", e.Field, e.Message)
+	return fmt.Sprintf("config: invalid field %q: %s", e.Field, e.Message)
 }
 
 // Validate checks the parsed Config for logical consistency and returns
 // an error if any constraint is violated.
 func Validate(cfg *Config) error {
 	if cfg == nil {
-		return errors.New("config: nil configuration")
+		return errors.New("config: nil config")
 	}
 
 	if cfg.MaxLines < 0 {
 		return &ValidationError{
 			Field:   "max-lines",
-			Message: "must be non-negative",
+			Message: "must be >= 0",
 		}
 	}
 
@@ -38,12 +38,11 @@ func Validate(cfg *Config) error {
 		}
 	}
 
-	if cfg.End.IsZero() && !cfg.Start.IsZero() {
-		// start without end is valid — open-ended range
-	}
-
-	if !cfg.End.IsZero() && cfg.Start.IsZero() {
-		// end without start is valid — open-ended range
+	if cfg.Workers < 1 {
+		return &ValidationError{
+			Field:   "workers",
+			Message: "must be >= 1",
+		}
 	}
 
 	return nil
