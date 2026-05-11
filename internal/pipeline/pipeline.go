@@ -1,66 +1,101 @@
-// Package pipeline wires together the core logslice processing components
-// into a single reusable execution unit.
+// Package pipeline wires together all internal components and drives
+// the per-file processing loop.
 package pipeline
 
 import (
+	"fmt"
 	"io"
 
-	"github.com/example/logslice/internal/config"
-	"github.com/example/logslice/internal/filereader"
-	"github.com/example/logslice/internal/logfilter"
-	"github.com/example/logslice/internal/output"
-	"github.com/example/logslice/internal/processor"
-	"github.com/example/logslice/internal/stats"
+	"github.com/yourorg/logslice/internal/config"
+	"github.com/yourorg/logslice/internal/filereader"
+	"github.com/yourorg/logslice/internal/head"
+	"github.com/yourorg/logslice/internal/logfilter"
+	"github.com/yourorg/logslice/internal/output"
+	"github.com/yourorg/logslice/internal/processor"
+	"github.com/yourorg/logslice/internal/progress"
+	"github.com/yourorg/logslice/internal/stats"
+	"github.com/yourorg/logslice/internal/tail"
 )
 
-// Pipeline holds the assembled components needed to process a single file.
+// Pipeline holds the shared components used across every file processed in
+// a single logslice invocation.
 type Pipeline struct {
 	cfg      *config.Config
 	out      *output.Writer
+	prog     *progress.Reporter
 	stats    *stats.Stats
 }
 
-// New creates a Pipeline from the given configuration, writing results to w.
-func New(cfg *config.Config, w io.Writer, s *stats.Stats) *Pipeline {
+// New constructs a Pipeline from the supplied configuration, writing
+// matching lines to w and progress/diagnostic messages to errW.
+func New(cfg *config.Config, w io.Writer, errW io.Writer, s *stats.Stats) *Pipeline {
+	out := output.New(w, cfg.LineNumbers, cfg.Prefix)
+	prog := progress.New(errW, cfg.Verbose)
 	return &Pipeline{
 		cfg:   cfg,
-		out:   output.New(w, cfg.LineNumbers, cfg.Prefix),
+		out:   out,
+		prog:  prog,
 		stats: s,
 	}
 }
 
-// Run opens path, applies filters defined in cfg, and writes matching lines.
-// Statistics are updated on the supplied Stats instance.
+// Run processes a single file identified by path, applying all filters
+// defined in the pipeline configuration. It updates the shared Stats and
+// reports progress via the progress reporter.
 func (p *Pipeline) Run(path string) error {
-	reader, err := filereader.New(path)
+	fr, err := filereader.New(path)
 	if err != nil {
-		return err
+		p.prog.Error(path, err)
+		return fmt.Errorf("open %s: %w", path, err)
 	}
-	defer reader.Close()
+	defer fr.Close()
 
 	p.stats.AddFile()
+	p.prog.FileStart(path)
 
-	filter, err := logfilter.New(
-		cfg(p).Pattern,
-		cfg(p).TimeField,
-		cfg(p).TimeLayout,
-		cfg(p).Start,
-		cfg(p).End,
-	)
+	// Build the log-line filter from config.
+	f, err := cfg(p.cfg)
 	if err != nil {
+		return fmt.Errorf("build filter: %w", err)
+	}
+
+	proc := processor.New(fr, f, p.out, p.stats)
+
+	// Wrap with head / tail limiters when requested.
+	if n := p.cfg.HeadLines(); n > 0 {
+		h := head.New(n)
+		read, matched, err := proc.ProcessHead(h)
+		p.prog.FileDone(path, read, matched)
 		return err
 	}
 
-	proc := processor.New(reader, filter, p.out, p.cfg.MaxLines)
+	if n := p.cfg.TailLines(); n > 0 {
+		t := tail.New(n)
+		read, matched, err := proc.ProcessTail(t, p.out)
+		p.prog.FileDone(path, read, matched)
+		return err
+	}
+
 	read, matched, err := proc.Process()
-	if err != nil {
-		return err
-	}
-
-	p.stats.AddRead(read)
-	p.stats.AddMatched(matched)
-	return nil
+	p.prog.FileDone(path, read, matched)
+	return err
 }
 
-// cfg is a small helper to avoid repeating the field access in Run.
-func cfg(p *Pipeline) *config.Config { return p.cfg }
+// cfg builds a logfilter.Filter from the pipeline configuration.
+func cfg(c *config.Config) (*logfilter.Filter, error) {
+	opts := []logfilter.Option{}
+
+	if c.TimeRange != nil {
+		opts = append(opts, logfilter.WithTimeRange(c.TimeRange))
+	}
+
+	if len(c.Patterns) > 0 {
+		opts = append(opts, logfilter.WithPatterns(c.Patterns))
+	}
+
+	if len(c.ExcludePatterns) > 0 {
+		opts = append(opts, logfilter.WithExcludePatterns(c.ExcludePatterns))
+	}
+
+	return logfilter.New(opts...)
+}
