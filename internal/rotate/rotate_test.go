@@ -65,6 +65,22 @@ func TestCheck_DeletedFile(t *testing.T) {
 	}
 }
 
+func TestCheck_DeletedFile_NotErrRotated(t *testing.T) {
+	// A deleted file should return an error, but not ErrRotated — it is
+	// a stat failure rather than a size-shrink rotation event.
+	p := writeTempFile(t, "data\n")
+	d, err := rotate.New(p)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if err := d.Check(); rotate.IsRotated(err) {
+		t.Fatal("expected non-ErrRotated error for deleted file")
+	}
+}
+
 func TestReset_UpdatesBaseline(t *testing.T) {
 	p := writeTempFile(t, "initial\n")
 	d, err := rotate.New(p)
